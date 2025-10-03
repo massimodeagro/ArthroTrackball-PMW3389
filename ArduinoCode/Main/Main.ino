@@ -748,7 +748,7 @@ void loop() {
            Serial.print(",");
            Serial.print(avg_w[1],5);
            Serial.print(",");
-           Serial.println(avg_w[2],5);
+           Serial.print(avg_w[2],5);
            Serial.println('e');
     pollTimer = currTime + 1;
     }
