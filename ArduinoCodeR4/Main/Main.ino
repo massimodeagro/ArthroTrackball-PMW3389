@@ -171,26 +171,24 @@ void setup() {
         calculate_Ainv(A, triplets[t].Ainv, det);
     }
 
-    Serial.println(F("SENSOR 0"));
-    performStartup(ncs0);
+    bool s0_ok = performStartup(ncs0);
+    delay(1000); 
+    bool s1_ok = performStartup(ncs1);
     delay(1000);
-    Serial.print(F("Product ID (Expected decimal 71 / 0x47): "));
-    Serial.println(adns_read_reg(Product_ID, ncs0));
-
-    delay(5);
-
-    Serial.println(F("SENSOR 1"));
-    performStartup(ncs1);
-    delay(1000);
-    Serial.print(F("Product ID (Expected decimal 71 / 0x47): "));
-    Serial.println(adns_read_reg(Product_ID, ncs1));
-
-    delay(1000);
+    
     digitalWrite(ncs0, HIGH);
     digitalWrite(ncs1, HIGH);
-    Serial.println(F("x,y,z"));
 
-    initComplete = 9;
+    if (s0_ok && s1_ok) {
+        initComplete = 9;  
+    } else if (s0_ok && !s1_ok) {
+        initComplete = 1; 
+    } else if (!s0_ok && s1_ok) {
+        initComplete = 2;  
+    } else {
+        initComplete = 0; 
+    }
+
     pollTimer = millis();
 }
 
@@ -297,6 +295,13 @@ void performStartup(int ncs) {
     adns_read_reg(Delta_Y_H, ncs);
     adns_upload_firmware(ncs);
     delay(10);
+
+    byte out = adns_read_reg(Product_ID, ncs); 
+
+    if (out == 0x42) {
+        return true; 
+    }
+    return false; 
 }
 
 void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint16_t *shutterSpeed) {
@@ -327,9 +332,7 @@ void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint1
 
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
-    byte status = 0;
-    if (initComplete != 9) status |= 0x01;
-
+    
     int16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
     int16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
     int16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
@@ -342,7 +345,7 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     byte buf[26];
     
     // Bytes 0-16: Kinematics & Raw Deltas
-    buf[0]  = status;
+    buf[0]  = initComplete;
     buf[1]  = (iwx >> 8) & 0xFF;  buf[2]  = iwx & 0xFF;
     buf[3]  = (iwy >> 8) & 0xFF;  buf[4]  = iwy & 0xFF;
     buf[5]  = (iwz >> 8) & 0xFF;  buf[6]  = iwz & 0xFF;
