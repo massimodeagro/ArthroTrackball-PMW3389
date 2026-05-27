@@ -256,7 +256,6 @@ void adns_write_reg(byte reg_addr, byte data, int ncs) {
 }
 
 void adns_upload_firmware(int ncs) {
-    Serial.println(F("Uploading firmware..."));
     adns_write_reg(Config2, 0x20, ncs);
     adns_write_reg(SROM_Enable, 0x1d, ncs);
     delay(10);
@@ -282,7 +281,7 @@ void adns_upload_firmware(int ncs) {
     adns_write_reg(Res_H, 0x00, ncs);
 }
 
-void performStartup(int ncs) {
+bool performStartup(int ncs) {
     adns_com_end(ncs);
     adns_com_begin(ncs);
     adns_com_end(ncs);
@@ -297,8 +296,8 @@ void performStartup(int ncs) {
     delay(10);
 
     byte out = adns_read_reg(Product_ID, ncs); 
-
-    if (out == 0x42) {
+    delay(1000);
+    if (out == 0x47) {
         return true; 
     }
     return false; 
@@ -328,6 +327,47 @@ void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint1
 
     // 4. Extract Real-time Shutter Speed (Bytes 10 & 11)
     *shutterSpeed = (uint16_t)((buf[10] << 8) | buf[11]);
+}
+
+void sendSerialPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
+                      byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
+    
+    int16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
+    int16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
+    int16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
+    int16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
+    int16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
+    int16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
+    int16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
+
+    // Inizio della riga leggibile
+    Serial.print("START_PKT -> Init:");
+    Serial.print(initComplete);
+
+    // Cinematica e coordinate grezze
+    Serial.print(", Wx:");   Serial.print(iwx);
+    Serial.print(", Wy:");   Serial.print(iwy);
+    Serial.print(", Wz:");   Serial.print(iwz);
+    Serial.print(", X0:");   Serial.print(ix0);
+    Serial.print(", Y0:");   Serial.print(iy0);
+    Serial.print(", X1:");   Serial.print(ix1);
+    Serial.print(", Y1:");   Serial.print(iy1);
+    
+    // Qualità della superficie (Squal)
+    Serial.print(", SQ0:");  Serial.print(sq0);
+    Serial.print(", SQ1:");  Serial.print(sq1);
+
+    // Delta tempo
+    Serial.print(", DT:");   Serial.print(deltaMillis);
+
+    // Diagnostica hardware (Motion e Shutter)
+    Serial.print(", MOT0:"); Serial.print(mot0);
+    Serial.print(", SH0:");  Serial.print(shutter0);
+    Serial.print(", MOT1:"); Serial.print(mot1);
+    Serial.print(", SH1:");  Serial.print(shutter1);
+
+    // Fine della riga con ritorno a capo
+    Serial.println(" <- END_PKT");
 }
 
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
