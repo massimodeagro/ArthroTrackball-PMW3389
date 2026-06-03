@@ -5,27 +5,58 @@
 SPISettings adnsSettings(2000000, MSBFIRST, SPI_MODE3);
 
 // Registers
-#define Product_ID          0x00
-#define Revision_ID         0x01
-#define Motion              0x02
-#define Delta_X_L           0x03
-#define Delta_X_H           0x04
-#define Delta_Y_L           0x05
-#define Delta_Y_H           0x06
-#define SQUAL               0x07
-#define Control             0x0D
-#define Res_L               0x0E
-#define Res_H               0x0F
-#define Config2             0x10
-#define SROM_Enable         0x13
-#define Power_Up_Reset      0x3A
-#define Motion_Burst        0x50
-#define SROM_ID             0x2A
-#define SROM_Load_Burst     0x62
+#define Product_ID  0x00
+#define Revision_ID 0x01
+#define Motion  0x02
+#define Delta_X_L 0x03
+#define Delta_X_H 0x04
+#define Delta_Y_L 0x05
+#define Delta_Y_H 0x06
+#define SQUAL 0x07
+#define Raw_Data_Sum  0x08
+#define Maximum_Raw_data  0x09
+#define Minimum_Raw_data  0x0A
+#define Shutter_Lower 0x0B
+#define Shutter_Upper 0x0C
+#define Control 0x0D
+#define Res_L 0x0E
+#define Res_H 0x0F
+#define Config2 0x10
+#define Angle_Tune  0x11
+#define Frame_Capture 0x12
+#define SROM_Enable 0x13
+#define Run_Downshift 0x14
+#define Rest1_Rate_Lower  0x15
+#define Rest1_Rate_Upper  0x16
+#define Rest1_Downshift 0x17
+#define Rest2_Rate_Lower  0x18
+#define Rest2_Rate_Upper  0x19
+#define Rest2_Downshift 0x1A
+#define Rest3_Rate_Lower  0x1B
+#define Rest3_Rate_Upper  0x1C
+#define Observation 0x24
+#define Data_Out_Lower  0x25
+#define Data_Out_Upper  0x26
+#define Raw_Data_Dump 0x29
+#define SROM_ID 0x2A
+#define Min_SQ_Run  0x2B
+#define Raw_Data_Threshold  0x2C
+#define Config5 0x2F
+#define Power_Up_Reset  0x3A
+#define Shutdown  0x3B
+#define Inverse_Product_ID  0x3F
+#define LiftCutoff_Tune3  0x41
+#define Angle_Snap  0x42
+#define LiftCutoff_Tune1  0x4A
+#define Motion_Burst  0x50
+#define LiftCutoff_Tune_Timeout 0x58
+#define LiftCutoff_Tune_Min_Length  0x5A
+#define SROM_Load_Burst 0x62
+#define Lift_Config 0x63
+#define Raw_Data_Burst  0x64
+#define LiftCutoff_Tune2  0x65
 
-#define PACKET_SCALE        1000    // radians * 1000 -> milliradians as int16
-#define PKT_START           0xAA
-#define PKT_END             0xFF
+#define PACKET_SCALE        100000   // radians * 100000 -
 
 // Pin Maps
 const int ncs0 = 10;
@@ -36,6 +67,8 @@ const int rst1 = 6;
 byte initComplete = 0;
 unsigned long pollTimer = 0;
 unsigned long lastMillis = 0;
+const unsigned long LOOP_PERIOD_MICROS = 2000; 
+unsigned long lastLoopMicros = 0;
 
 extern const unsigned short firmware_length;
 extern const unsigned char firmware_data[];
@@ -193,6 +226,11 @@ void setup() {
 }
 
 void loop() {
+    while (micros() - lastLoopMicros < LOOP_PERIOD_MICROS) {
+        // Non-blocking wait trap to lock frequency to exactly 300Hz
+    }
+    lastLoopMicros = micros(); // Capture the exact start time of this execution cycle
+
     unsigned long currentMillis = millis();
     
     // Calculate the integer delta since the last iteration
@@ -226,11 +264,12 @@ void loop() {
 
 // SPI Transactions Framework
 void adns_com_begin(int ncs) {
-    SPI.beginTransaction(adnsSettings);
     digitalWrite(ncs, LOW);
+    SPI.beginTransaction(adnsSettings);
 }
 
 void adns_com_end(int ncs) {
+    delayMicroseconds(1);
     digitalWrite(ncs, HIGH);
     SPI.endTransaction();
 }
@@ -277,8 +316,8 @@ void adns_upload_firmware(int ncs) {
     adns_write_reg(Config2, 0x00, ncs);
 
     // Explicitly lock resolution configuration to 5000 CPI (5000 / 50 = 100 = 0x64)
-    adns_write_reg(Res_L, 0x64, ncs);
     adns_write_reg(Res_H, 0x00, ncs);
+    adns_write_reg(Res_L, 0x64, ncs);
 }
 
 bool performStartup(int ncs) {
@@ -370,51 +409,76 @@ void sendSerialPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     Serial.println(" <- END_PKT");
 }
 
+// Explicitly define packet size constants
+#define RAW_PAYLOAD_SIZE 25
+#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2) // +1 for Checksum, +1 for COBS Overhead
+
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
     
-    int16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
-    int16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
-    int16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
-    int16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
-    int16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
-    int16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
-    int16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
+    // 1. Constrain and cast safely to unsigned equivalents for bitwise operations
+    uint16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
+    uint16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
+    uint16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
+    uint16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
+    uint16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
+    uint16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
+    uint16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
 
-    // Buffer layout: 25 Data Bytes + 1 Checksum Byte = 26 total
-    byte buf[26];
-    
-    // Bytes 0-16: Kinematics & Raw Deltas
-    buf[0]  = initComplete;
-    buf[1]  = (iwx >> 8) & 0xFF;  buf[2]  = iwx & 0xFF;
-    buf[3]  = (iwy >> 8) & 0xFF;  buf[4]  = iwy & 0xFF;
-    buf[5]  = (iwz >> 8) & 0xFF;  buf[6]  = iwz & 0xFF;
-    buf[7]  = (ix0 >> 8) & 0xFF;  buf[8]  = ix0 & 0xFF;
-    buf[9]  = (iy0 >> 8) & 0xFF;  buf[10] = iy0 & 0xFF;
-    buf[11] = (ix1 >> 8) & 0xFF;  buf[12] = ix1 & 0xFF;
-    buf[13] = (iy1 >> 8) & 0xFF;  buf[14] = iy1 & 0xFF;
-    buf[15] = sq0;
-    buf[16] = sq1;
+    // Buffer for raw data + checksum
+    byte raw_buf[RAW_PAYLOAD_SIZE + 1]; 
 
-    // Bytes 17-18: Lightweight 16-bit Delta Time (ms)
-    buf[17] = (deltaMillis >> 8) & 0xFF;
-    buf[18] = deltaMillis & 0xFF;
+    // Pack raw bytes explicitly using logical masking
+    raw_buf[0]  = initComplete;
+    raw_buf[1]  = (iwx >> 8) & 0xFF;  raw_buf[2]  = iwx & 0xFF;
+    raw_buf[3]  = (iwy >> 8) & 0xFF;  raw_buf[4]  = iwy & 0xFF;
+    raw_buf[5]  = (iwz >> 8) & 0xFF;  raw_buf[6]  = iwz & 0xFF;
+    raw_buf[7]  = (ix0 >> 8) & 0xFF;  raw_buf[8]  = ix0 & 0xFF;
+    raw_buf[9]  = (iy0 >> 8) & 0xFF;  raw_buf[10] = iy0 & 0xFF;
+    raw_buf[11] = (ix1 >> 8) & 0xFF;  raw_buf[12] = ix1 & 0xFF;
+    raw_buf[13] = (iy1 >> 8) & 0xFF;  raw_buf[14] = iy1 & 0xFF;
+    raw_buf[15] = sq0;
+    raw_buf[16] = sq1;
 
-    // Bytes 19-24: Hardware Diagnostics
-    buf[19] = mot0;
-    buf[20] = (shutter0 >> 8) & 0xFF;    buf[21] = shutter0 & 0xFF;
-    buf[22] = mot1;
-    buf[23] = (shutter1 >> 8) & 0xFF;    buf[24] = shutter1 & 0xFF;
+    raw_buf[17] = (deltaMillis >> 8) & 0xFF;
+    raw_buf[18] = deltaMillis & 0xFF;
 
-    // Compute XOR Checksum over the 25 data bytes
+    raw_buf[19] = mot0;
+    raw_buf[20] = (shutter0 >> 8) & 0xFF;    raw_buf[21] = shutter0 & 0xFF;
+    raw_buf[22] = mot1;
+    raw_buf[23] = (shutter1 >> 8) & 0xFF;    raw_buf[24] = shutter1 & 0xFF;
+
+    // 2. Compute Checksum over the payload
     byte ck = 0;
-    for (int i = 0; i < 25; i++) {
-        ck ^= buf[i];
+    for (int i = 0; i < RAW_PAYLOAD_SIZE; i++) {
+        ck ^= raw_buf[i];
     }
-    buf[25] = ck;
+    raw_buf[RAW_PAYLOAD_SIZE] = ck; // Store checksum at the end of raw payload
 
-    // Stream frame
-    Serial.write(PKT_START);
-    Serial.write(buf, 26);
-    Serial.write(PKT_END);
-}
+    // 3. Encode to COBS to eliminate all 0x00 bytes from data stream
+    byte tx_buf[TRANSMIT_BUFFER_SIZE];
+    
+    uint8_t code_index = 0;
+    uint8_t code = 1;
+    
+    for (int i = 0; i < (RAW_PAYLOAD_SIZE + 1); i++) {
+        if (raw_buf[i] == 0x00) {
+            tx_buf[code_index] = code;
+            code_index = i + 1;
+            code = 1;
+        } else {
+            tx_buf[i + 1] = raw_buf[i];
+            code++;
+            if (code == 0xFF) {
+                tx_buf[code_index] = code;
+                code_index = i + 1;
+                code = 1; // Safeguard for long packets (not strictly hit here)
+            }
+        }
+    }
+    tx_buf[code_index] = code;
+
+    // 4. Stream frame out with a unique, un-collidable 0x00 delimiter
+    Serial.write(tx_buf, TRANSMIT_BUFFER_SIZE);
+    Serial.write((uint8_t)0x00);
+    }
