@@ -409,44 +409,46 @@ void sendSerialPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     Serial.println(" <- END_PKT");
 }
 
-// Explicitly define packet size constants
-#define RAW_PAYLOAD_SIZE 25
-#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2) // +1 for Checksum, +1 for COBS Overhead
+// Change your RAW_PAYLOAD_SIZE from 25 to 31 because we are adding 6 bytes total
+#define RAW_PAYLOAD_SIZE 31
+#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2)
 
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
     
-    // 1. Constrain and cast safely to unsigned equivalents for bitwise operations
-    uint16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
-    uint16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
-    uint16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
-    uint16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
-    uint16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
-    uint16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
-    uint16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
-
-    // Buffer for raw data + checksum
     byte raw_buf[RAW_PAYLOAD_SIZE + 1]; 
 
-    // Pack raw bytes explicitly using logical masking
-    raw_buf[0]  = initComplete;
-    raw_buf[1]  = (iwx >> 8) & 0xFF;  raw_buf[2]  = iwx & 0xFF;
-    raw_buf[3]  = (iwy >> 8) & 0xFF;  raw_buf[4]  = iwy & 0xFF;
-    raw_buf[5]  = (iwz >> 8) & 0xFF;  raw_buf[6]  = iwz & 0xFF;
-    raw_buf[7]  = (ix0 >> 8) & 0xFF;  raw_buf[8]  = ix0 & 0xFF;
-    raw_buf[9]  = (iy0 >> 8) & 0xFF;  raw_buf[10] = iy0 & 0xFF;
-    raw_buf[11] = (ix1 >> 8) & 0xFF;  raw_buf[12] = ix1 & 0xFF;
-    raw_buf[13] = (iy1 >> 8) & 0xFF;  raw_buf[14] = iy1 & 0xFF;
-    raw_buf[15] = sq0;
-    raw_buf[16] = sq1;
+    // Pack raw bytes
+    raw_buf[0] = initComplete;
 
-    raw_buf[17] = (deltaMillis >> 8) & 0xFF;
-    raw_buf[18] = deltaMillis & 0xFF;
+    // Copy 32-bit floats directly into the byte buffer (4 bytes each)
+    // We use memcpy to handle big-endian conversion manually if needed, 
+    // but standard AVR/ARM float representation works perfectly with Python's unpack
+    memcpy(&raw_buf[1],  &wx, 4);
+    memcpy(&raw_buf[5],  &wy, 4);
+    memcpy(&raw_buf[9],  &wz, 4);
 
-    raw_buf[19] = mot0;
-    raw_buf[20] = (shutter0 >> 8) & 0xFF;    raw_buf[21] = shutter0 & 0xFF;
-    raw_buf[22] = mot1;
-    raw_buf[23] = (shutter1 >> 8) & 0xFF;    raw_buf[24] = shutter1 & 0xFF;
+    // Cast 16-bit integer raw coordinates (2 bytes each)
+    uint16_t ix0 = (int16_t)x0;
+    uint16_t iy0 = (int16_t)y0;
+    uint16_t ix1 = (int16_t)x1;
+    uint16_t iy1 = (int16_t)y1;
+
+    raw_buf[13] = (ix0 >> 8) & 0xFF;  raw_buf[14] = ix0 & 0xFF;
+    raw_buf[15] = (iy0 >> 8) & 0xFF;  raw_buf[16] = iy0 & 0xFF;
+    raw_buf[17] = (ix1 >> 8) & 0xFF;  raw_buf[18] = ix1 & 0xFF;
+    raw_buf[19] = (iy1 >> 8) & 0xFF;  raw_buf[20] = iy1 & 0xFF;
+    
+    raw_buf[21] = sq0;
+    raw_buf[22] = sq1;
+
+    raw_buf[23] = (deltaMillis >> 8) & 0xFF;
+    raw_buf[24] = deltaMillis & 0xFF;
+
+    raw_buf[25] = mot0;
+    raw_buf[26] = (shutter0 >> 8) & 0xFF;    raw_buf[27] = shutter0 & 0xFF;
+    raw_buf[28] = mot1;
+    raw_buf[29] = (shutter1 >> 8) & 0xFF;    raw_buf[30] = shutter1 & 0xFF;
 
     // 2. Compute Checksum over the payload
     byte ck = 0;
