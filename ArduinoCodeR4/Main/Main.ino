@@ -56,7 +56,7 @@ SPISettings adnsSettings(2000000, MSBFIRST, SPI_MODE3);
 #define Raw_Data_Burst  0x64
 #define LiftCutoff_Tune2  0x65
 
-#define PACKET_SCALE        1000000   // radians * 1000 -> milliradians as int16
+#define PACKET_SCALE        100000   // radians * 100000 -
 
 // Pin Maps
 const int ncs0 = 10;
@@ -67,7 +67,7 @@ const int rst1 = 6;
 byte initComplete = 0;
 unsigned long pollTimer = 0;
 unsigned long lastMillis = 0;
-const unsigned long LOOP_PERIOD_MICROS = 2000; 
+const unsigned long LOOP_PERIOD_MICROS = 2000;
 unsigned long lastLoopMicros = 0;
 
 extern const unsigned short firmware_length;
@@ -84,7 +84,7 @@ float S1p[3]  = {-15.26, 8.8, -6.4};
 float S1xs[3] = {-0.5, -0.87, 0};
 float S1ys[3] = {-0.29, 0.18, 0.94};
 
-// Map structural layout for clean indexing 
+// Map structural layout for clean indexing
 struct AxisConfig {
     float* pos;
     float* dir;
@@ -205,21 +205,21 @@ void setup() {
     }
 
     bool s0_ok = performStartup(ncs0);
-    delay(1000); 
+    delay(1000);
     bool s1_ok = performStartup(ncs1);
     delay(1000);
-    
+   
     digitalWrite(ncs0, HIGH);
     digitalWrite(ncs1, HIGH);
 
     if (s0_ok && s1_ok) {
         initComplete = 9;  
     } else if (s0_ok && !s1_ok) {
-        initComplete = 1; 
+        initComplete = 1;
     } else if (!s0_ok && s1_ok) {
         initComplete = 2;  
     } else {
-        initComplete = 0; 
+        initComplete = 0;
     }
 
     pollTimer = millis();
@@ -232,7 +232,7 @@ void loop() {
     lastLoopMicros = micros(); // Capture the exact start time of this execution cycle
 
     unsigned long currentMillis = millis();
-    
+   
     // Calculate the integer delta since the last iteration
     uint16_t deltaMillis = (uint16_t)(currentMillis - lastMillis);
     lastMillis = currentMillis;
@@ -258,7 +258,7 @@ void loop() {
     }
 
     calculate_combined_avg_w(avg_w);
-    
+   
     sendBinaryPacket(avg_w[0], avg_w[1], avg_w[2], x0, y0, x1, y1, sq0, sq1, mot0, shutter0, mot1, shutter1, deltaMillis);
 }
 
@@ -334,12 +334,12 @@ bool performStartup(int ncs) {
     adns_upload_firmware(ncs);
     delay(10);
 
-    byte out = adns_read_reg(Product_ID, ncs); 
+    byte out = adns_read_reg(Product_ID, ncs);
     delay(1000);
     if (out == 0x47) {
-        return true; 
+        return true;
     }
-    return false; 
+    return false;
 }
 
 void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint16_t *shutterSpeed) {
@@ -368,70 +368,58 @@ void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint1
     *shutterSpeed = (uint16_t)((buf[10] << 8) | buf[11]);
 }
 
+// Explicitly define packet size constants
+#define RAW_PAYLOAD_SIZE 25
+#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2) // +1 for Checksum, +1 for COBS Overhead
 
-#define RAW_PAYLOAD_SIZE 31
-#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2)
-
-void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
+void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1,
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
-    
-    byte raw_buf[RAW_PAYLOAD_SIZE + 1]; 
+   
+    // 1. Constrain and cast safely to unsigned equivalents for bitwise operations
+    uint16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
+    uint16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
+    uint16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
+    uint16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
+    uint16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
+    uint16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
+    uint16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
 
-    // Pack raw bytes
-    raw_buf[0] = initComplete;
+    // Buffer for raw data + checksum
+    byte raw_buf[RAW_PAYLOAD_SIZE + 1];
 
-    // 1. Scale and convert tracking velocities to 32-bit signed integers
-    int32_t iwx = (int32_t)(wx * PACKET_SCALE);
-    int32_t iwy = (int32_t)(wy * PACKET_SCALE);
-    int32_t iwz = (int32_t)(wz * PACKET_SCALE); 
+    // Pack raw bytes explicitly using logical masking
+    raw_buf[0]  = initComplete;
+    raw_buf[1]  = (iwx >> 8) & 0xFF;  raw_buf[2]  = iwx & 0xFF;
+    raw_buf[3]  = (iwy >> 8) & 0xFF;  raw_buf[4]  = iwy & 0xFF;
+    raw_buf[5]  = (iwz >> 8) & 0xFF;  raw_buf[6]  = iwz & 0xFF;
+    raw_buf[7]  = (ix0 >> 8) & 0xFF;  raw_buf[8]  = ix0 & 0xFF;
+    raw_buf[9]  = (iy0 >> 8) & 0xFF;  raw_buf[10] = iy0 & 0xFF;
+    raw_buf[11] = (ix1 >> 8) & 0xFF;  raw_buf[12] = ix1 & 0xFF;
+    raw_buf[13] = (iy1 >> 8) & 0xFF;  raw_buf[14] = iy1 & 0xFF;
+    raw_buf[15] = sq0;
+    raw_buf[16] = sq1;
 
-    // 2. Explicitly map out the 32-bit integers in Big-Endian order (Bytes 1-12)
-    raw_buf[1]  = (iwx >> 24) & 0xFF;  raw_buf[2]  = (iwx >> 16) & 0xFF;
-    raw_buf[3]  = (iwx >> 8)  & 0xFF;  raw_buf[4]  = iwx & 0xFF;
+    raw_buf[17] = (deltaMillis >> 8) & 0xFF;
+    raw_buf[18] = deltaMillis & 0xFF;
 
-    raw_buf[5]  = (iwy >> 24) & 0xFF;  raw_buf[6]  = (iwy >> 16) & 0xFF;
-    raw_buf[7]  = (iwy >> 8)  & 0xFF;  raw_buf[8]  = iwy & 0xFF;
+    raw_buf[19] = mot0;
+    raw_buf[20] = (shutter0 >> 8) & 0xFF;    raw_buf[21] = shutter0 & 0xFF;
+    raw_buf[22] = mot1;
+    raw_buf[23] = (shutter1 >> 8) & 0xFF;    raw_buf[24] = shutter1 & 0xFF;
 
-    raw_buf[9]  = (iwz >> 24) & 0xFF;  raw_buf[10] = (iwz >> 16) & 0xFF;
-    raw_buf[11] = (iwz >> 8)  & 0xFF;  raw_buf[12] = iwz & 0xFF;
-
-    // 3. Cast and map 16-bit integer raw coordinates (Bytes 13-20)
-    uint16_t ix0 = (int16_t)x0;
-    uint16_t iy0 = (int16_t)y0;
-    uint16_t ix1 = (int16_t)x1;
-    uint16_t iy1 = (int16_t)y1;
-
-    raw_buf[13] = (ix0 >> 8) & 0xFF;  raw_buf[14] = ix0 & 0xFF;
-    raw_buf[15] = (iy0 >> 8) & 0xFF;  raw_buf[16] = iy0 & 0xFF;
-    raw_buf[17] = (ix1 >> 8) & 0xFF;  raw_buf[18] = ix1 & 0xFF;
-    raw_buf[19] = (iy1 >> 8) & 0xFF;  raw_buf[20] = iy1 & 0xFF;
-    
-    // 4. Surface quality metrics
-    raw_buf[21] = sq0;
-    raw_buf[22] = sq1;
-
-    // 5. High-resolution timing delta tracker
-    raw_buf[23] = (deltaMillis >> 8) & 0xFF;
-    raw_buf[24] = deltaMillis & 0xFF;
-
-    // 6. Diagnostic flags & Optical Shutter metrics
-    raw_buf[25] = mot0;
-    raw_buf[26] = (shutter0 >> 8) & 0xFF;    raw_buf[27] = shutter0 & 0xFF;
-    raw_buf[28] = mot1;
-    raw_buf[29] = (shutter1 >> 8) & 0xFF;    raw_buf[30] = shutter1 & 0xFF;
-
-    // 7. Compute XOR Checksum over the entire populated payload buffer
+    // 2. Compute Checksum over the payload
     byte ck = 0;
     for (int i = 0; i < RAW_PAYLOAD_SIZE; i++) {
         ck ^= raw_buf[i];
     }
-    raw_buf[RAW_PAYLOAD_SIZE] = ck; // Store checksum byte cleanly at the absolute end
+    raw_buf[RAW_PAYLOAD_SIZE] = ck; // Store checksum at the end of raw payload
 
-    // 8. Encode to COBS stream output matrix array
+    // 3. Encode to COBS to eliminate all 0x00 bytes from data stream
     byte tx_buf[TRANSMIT_BUFFER_SIZE];
+   
     uint8_t code_index = 0;
     uint8_t code = 1;
-    
+   
     for (int i = 0; i < (RAW_PAYLOAD_SIZE + 1); i++) {
         if (raw_buf[i] == 0x00) {
             tx_buf[code_index] = code;
@@ -443,13 +431,13 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
             if (code == 0xFF) {
                 tx_buf[code_index] = code;
                 code_index = i + 1;
-                code = 1; 
+                code = 1; // Safeguard for long packets (not strictly hit here)
             }
         }
     }
     tx_buf[code_index] = code;
 
-    // 9. Blast out the clean packet followed by the delimiter flag
+    // 4. Stream frame out with a unique, un-collidable 0x00 delimiter
     Serial.write(tx_buf, TRANSMIT_BUFFER_SIZE);
     Serial.write((uint8_t)0x00);
-}
+    }
