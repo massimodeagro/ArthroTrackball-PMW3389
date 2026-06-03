@@ -57,8 +57,6 @@ SPISettings adnsSettings(2000000, MSBFIRST, SPI_MODE3);
 #define LiftCutoff_Tune2  0x65
 
 #define PACKET_SCALE        1000000   // radians * 1000 -> milliradians as int16
-#define PKT_START           0xAA
-#define PKT_END             0xFF
 
 // Pin Maps
 const int ncs0 = 10;
@@ -69,6 +67,8 @@ const int rst1 = 6;
 byte initComplete = 0;
 unsigned long pollTimer = 0;
 unsigned long lastMillis = 0;
+const unsigned long LOOP_PERIOD_MICROS = 2000; 
+unsigned long lastLoopMicros = 0;
 
 extern const unsigned short firmware_length;
 extern const unsigned char firmware_data[];
@@ -226,6 +226,11 @@ void setup() {
 }
 
 void loop() {
+    while (micros() - lastLoopMicros < LOOP_PERIOD_MICROS) {
+        // Non-blocking wait trap to lock frequency to exactly 300Hz
+    }
+    lastLoopMicros = micros(); // Capture the exact start time of this execution cycle
+
     unsigned long currentMillis = millis();
     
     // Calculate the integer delta since the last iteration
@@ -259,11 +264,12 @@ void loop() {
 
 // SPI Transactions Framework
 void adns_com_begin(int ncs) {
-    SPI.beginTransaction(adnsSettings);
     digitalWrite(ncs, LOW);
+    SPI.beginTransaction(adnsSettings);
 }
 
 void adns_com_end(int ncs) {
+    delayMicroseconds(1);
     digitalWrite(ncs, HIGH);
     SPI.endTransaction();
 }
@@ -310,8 +316,8 @@ void adns_upload_firmware(int ncs) {
     adns_write_reg(Config2, 0x00, ncs);
 
     // Explicitly lock resolution configuration to 5000 CPI (5000 / 50 = 100 = 0x64)
-    adns_write_reg(Res_L, 0x64, ncs);
     adns_write_reg(Res_H, 0x00, ncs);
+    adns_write_reg(Res_L, 0x64, ncs);
 }
 
 bool performStartup(int ncs) {
