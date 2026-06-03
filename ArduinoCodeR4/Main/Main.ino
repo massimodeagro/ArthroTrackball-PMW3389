@@ -368,51 +368,6 @@ void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint1
     *shutterSpeed = (uint16_t)((buf[10] << 8) | buf[11]);
 }
 
-void sendSerialPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
-                      byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
-    
-    int16_t iwx = (int16_t)constrain((long)(wx * PACKET_SCALE), -32768, 32767);
-    int16_t iwy = (int16_t)constrain((long)(wy * PACKET_SCALE), -32768, 32767);
-    int16_t iwz = (int16_t)constrain((long)(wz * PACKET_SCALE), -32768, 32767);
-    int16_t ix0 = (int16_t)constrain((long)x0, -32768, 32767);
-    int16_t iy0 = (int16_t)constrain((long)y0, -32768, 32767);
-    int16_t ix1 = (int16_t)constrain((long)x1, -32768, 32767);
-    int16_t iy1 = (int16_t)constrain((long)y1, -32768, 32767);
-
-    // Inizio della riga leggibile
-    Serial.print("START_PKT -> Init:");
-    Serial.print(initComplete);
-
-    // Cinematica e coordinate grezze
-    Serial.print(", Wx:");   Serial.print(iwx);
-    Serial.print(", Wy:");   Serial.print(iwy);
-    Serial.print(", Wz:");   Serial.print(iwz);
-    Serial.print(", X0:");   Serial.print(ix0);
-    Serial.print(", Y0:");   Serial.print(iy0);
-    Serial.print(", X1:");   Serial.print(ix1);
-    Serial.print(", Y1:");   Serial.print(iy1);
-    
-    // Qualità della superficie (Squal)
-    Serial.print(", SQ0:");  Serial.print(sq0);
-    Serial.print(", SQ1:");  Serial.print(sq1);
-
-    // Delta tempo
-    Serial.print(", DT:");   Serial.print(deltaMillis);
-
-    // Diagnostica hardware (Motion e Shutter)
-    Serial.print(", MOT0:"); Serial.print(mot0);
-    Serial.print(", SH0:");  Serial.print(shutter0);
-    Serial.print(", MOT1:"); Serial.print(mot1);
-    Serial.print(", SH1:");  Serial.print(shutter1);
-
-    // Fine della riga con ritorno a capo
-    Serial.println(" <- END_PKT");
-}
-
-// Change your RAW_PAYLOAD_SIZE from 25 to 31 because we are adding 6 bytes total
-#define RAW_PAYLOAD_SIZE 31
-#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2)
-
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
     
@@ -421,14 +376,22 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     // Pack raw bytes
     raw_buf[0] = initComplete;
 
-    // Copy 32-bit floats directly into the byte buffer (4 bytes each)
-    // We use memcpy to handle big-endian conversion manually if needed, 
-    // but standard AVR/ARM float representation works perfectly with Python's unpack
+    // 1. Scale and convert tracking velocities to 32-bit signed integers
     int32_t iwx = (int32_t)(wx * PACKET_SCALE);
     int32_t iwy = (int32_t)(wy * PACKET_SCALE);
-    int32_t iwz = (int32_t)(wz * PACKET_SCALE0);
+    int32_t iwz = (int32_t)(wz * PACKET_SCALE); 
 
-    // Cast 16-bit integer raw coordinates (2 bytes each)
+    // 2. Explicitly map out the 32-bit integers in Big-Endian order (Bytes 1-12)
+    raw_buf[1]  = (iwx >> 24) & 0xFF;  raw_buf[2]  = (iwx >> 16) & 0xFF;
+    raw_buf[3]  = (iwx >> 8)  & 0xFF;  raw_buf[4]  = iwx & 0xFF;
+
+    raw_buf[5]  = (iwy >> 24) & 0xFF;  raw_buf[6]  = (iwy >> 16) & 0xFF;
+    raw_buf[7]  = (iwy >> 8)  & 0xFF;  raw_buf[8]  = iwy & 0xFF;
+
+    raw_buf[9]  = (iwz >> 24) & 0xFF;  raw_buf[10] = (iwz >> 16) & 0xFF;
+    raw_buf[11] = (iwz >> 8)  & 0xFF;  raw_buf[12] = iwz & 0xFF;
+
+    // 3. Cast and map 16-bit integer raw coordinates (Bytes 13-20)
     uint16_t ix0 = (int16_t)x0;
     uint16_t iy0 = (int16_t)y0;
     uint16_t ix1 = (int16_t)x1;
@@ -439,27 +402,29 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     raw_buf[17] = (ix1 >> 8) & 0xFF;  raw_buf[18] = ix1 & 0xFF;
     raw_buf[19] = (iy1 >> 8) & 0xFF;  raw_buf[20] = iy1 & 0xFF;
     
+    // 4. Surface quality metrics
     raw_buf[21] = sq0;
     raw_buf[22] = sq1;
 
+    // 5. High-resolution timing delta tracker
     raw_buf[23] = (deltaMillis >> 8) & 0xFF;
     raw_buf[24] = deltaMillis & 0xFF;
 
+    // 6. Diagnostic flags & Optical Shutter metrics
     raw_buf[25] = mot0;
     raw_buf[26] = (shutter0 >> 8) & 0xFF;    raw_buf[27] = shutter0 & 0xFF;
     raw_buf[28] = mot1;
     raw_buf[29] = (shutter1 >> 8) & 0xFF;    raw_buf[30] = shutter1 & 0xFF;
 
-    // 2. Compute Checksum over the payload
+    // 7. Compute XOR Checksum over the entire populated payload buffer
     byte ck = 0;
     for (int i = 0; i < RAW_PAYLOAD_SIZE; i++) {
         ck ^= raw_buf[i];
     }
-    raw_buf[RAW_PAYLOAD_SIZE] = ck; // Store checksum at the end of raw payload
+    raw_buf[RAW_PAYLOAD_SIZE] = ck; // Store checksum byte cleanly at the absolute end
 
-    // 3. Encode to COBS to eliminate all 0x00 bytes from data stream
+    // 8. Encode to COBS stream output matrix array
     byte tx_buf[TRANSMIT_BUFFER_SIZE];
-    
     uint8_t code_index = 0;
     uint8_t code = 1;
     
@@ -474,13 +439,13 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
             if (code == 0xFF) {
                 tx_buf[code_index] = code;
                 code_index = i + 1;
-                code = 1; // Safeguard for long packets (not strictly hit here)
+                code = 1; 
             }
         }
     }
     tx_buf[code_index] = code;
 
-    // 4. Stream frame out with a unique, un-collidable 0x00 delimiter
+    // 9. Blast out the clean packet followed by the delimiter flag
     Serial.write(tx_buf, TRANSMIT_BUFFER_SIZE);
     Serial.write((uint8_t)0x00);
-    }
+}
