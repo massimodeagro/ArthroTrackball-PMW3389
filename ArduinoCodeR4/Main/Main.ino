@@ -424,9 +424,9 @@ void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int 
     // Copy 32-bit floats directly into the byte buffer (4 bytes each)
     // We use memcpy to handle big-endian conversion manually if needed, 
     // but standard AVR/ARM float representation works perfectly with Python's unpack
-    memcpy(&raw_buf[1],  &wx, 4);
-    memcpy(&raw_buf[5],  &wy, 4);
-    memcpy(&raw_buf[9],  &wz, 4);
+    int32_t iwx = (int32_t)(wx * PACKET_SCALE);
+    int32_t iwy = (int32_t)(wy * PACKET_SCALE);
+    int32_t iwz = (int32_t)(wz * PACKET_SCALE0);
 
     // Cast 16-bit integer raw coordinates (2 bytes each)
     uint16_t ix0 = (int16_t)x0;
