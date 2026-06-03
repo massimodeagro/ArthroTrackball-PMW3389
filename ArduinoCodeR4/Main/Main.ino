@@ -368,6 +368,10 @@ void readBurst(int ncs, int *dx, int *dy, byte *squal, byte *motionStatus, uint1
     *shutterSpeed = (uint16_t)((buf[10] << 8) | buf[11]);
 }
 
+
+#define RAW_PAYLOAD_SIZE 31
+#define TRANSMIT_BUFFER_SIZE (RAW_PAYLOAD_SIZE + 2)
+
 void sendBinaryPacket(float wx, float wy, float wz, int x0, int y0, int x1, int y1, 
                       byte sq0, byte sq1, byte mot0, uint16_t shutter0, byte mot1, uint16_t shutter1, uint16_t deltaMillis) {
     
